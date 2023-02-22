@@ -20,57 +20,50 @@
 
 #include "../config.h"
 
-#ifdef TGL_AVOID_OPENSSL
+#ifndef TGL_AVOID_OPENSSL
 
-#include <gcrypt.h>
+//#include <stddef.h> /* NULL */
 
+#include <openssl/rsa.h>
+#include <openssl/pem.h>
+
+#include "bn.h"
 #include "meta.h"
 #include "rsa_pem.h"
-#include "../tools.h" /* talloc */
 
-struct TGLC_rsa {
-  TGLC_bn *n;
-  TGLC_bn *e;
-};
+TGLC_WRAPPER_ASSOC(rsa,RSA)
+
+// TODO: Refactor crucial struct-identity into its own header.
+TGLC_WRAPPER_ASSOC(bn,BIGNUM)
 
 TGLC_rsa *TGLC_rsa_new (unsigned long e, int n_bytes, const unsigned char *n) {
-  assert (n_bytes > 0 && n_bytes < 5000);
-  TGLC_rsa *ret = talloc (sizeof (TGLC_rsa));
-  ret->e = TGLC_bn_new ();
-  TGLC_bn_set_word (ret->e, e);
-  ret->n = TGLC_bn_bin2bn (n, n_bytes, NULL);
-  assert (n_bytes == TGLC_bn_num_bytes (ret->n));
-  return ret;
+  RSA *ret = RSA_new ();
+  BIGNUM *ret_e = unwrap_bn (TGLC_bn_new ());
+  BIGNUM *ret_n = unwrap_bn (TGLC_bn_bin2bn (n, n_bytes, NULL));
+  RSA_set0_key (ret, ret_n, ret_e, NULL);
+  TGLC_bn_set_word (wrap_bn (ret_e), e);
+  return wrap_rsa (ret);
 }
 
-#define RSA_GETTER(M)                                                          \
-  TGLC_bn *TGLC_rsa_ ## M (TGLC_rsa *key) {                                    \
-    return key->M;                                                             \
-  }                                                                            \
+#define RSA_GETTER(M)                       \
+TGLC_bn *TGLC_rsa_ ## M (TGLC_rsa *key) {   \
+    BIGNUM *rsa_n, *rsa_e, *rsa_d;          \
+    RSA_get0_key(unwrap_rsa (key),          \
+        (const BIGNUM **) &rsa_n,           \
+        (const BIGNUM **) &rsa_e,           \
+        (const BIGNUM **) &rsa_d);          \
+    return wrap_bn (rsa_ ## M);             \
+}
 
 RSA_GETTER(n);
 RSA_GETTER(e);
 
-void TGLC_rsa_free (TGLC_rsa *key) {
-  if (key->e) {
-    TGLC_bn_free (key->e);
-  }
-  if (key->n) {
-    TGLC_bn_free (key->n);
-  }
-  tfree (key, sizeof (TGLC_rsa));
+void TGLC_rsa_free (TGLC_rsa *p) {
+  RSA_free (unwrap_rsa (p));
 }
 
 TGLC_rsa *TGLC_pem_read_RSAPublicKey (FILE *fp) {
-  /*
-   * Reading PEM format involves ASN.1 and is hard. libgcrypt doesn't support it.
-   * The dependency on oh-so-freaking-much code just to parse static data that
-   * will never change is not justified. Let the caller figure out how to resolve
-   * this (telegram-purple does so by using libpurple's built-in functions), and
-   * ignore any PEM files.
-   */
-  (void) fp;
-  return NULL;
+  return wrap_rsa (PEM_read_RSAPublicKey (fp, NULL, NULL, NULL));
 }
 
 #endif
